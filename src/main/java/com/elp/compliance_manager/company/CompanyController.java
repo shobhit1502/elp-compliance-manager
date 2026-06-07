@@ -1,5 +1,8 @@
 package com.elp.compliance_manager.company;
 
+import com.elp.compliance_manager.company.dto.CompanyRequestDTO;
+import com.elp.compliance_manager.company.dto.CompanyResponseDTO;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,26 +17,28 @@ public class CompanyController {
     private final CompanyService companyService;
 
     @PostMapping
-    public ResponseEntity<Company> createCompany(@RequestBody Company company) {
-        Company created = companyService.createCompany(company);
-        return ResponseEntity.status(HttpStatus.CREATED).body(created);
+    public ResponseEntity<CompanyResponseDTO> createCompany(
+            @Valid @RequestBody CompanyRequestDTO request) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(companyService.createCompany(request));
     }
 
     @GetMapping
-    public ResponseEntity<List<Company>> getAllCompanies() {
+    public ResponseEntity<List<CompanyResponseDTO>> getAllCompanies() {
         return ResponseEntity.ok(companyService.getAllCompanies());
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Company> getCompanyById(@PathVariable Long id) {
+    public ResponseEntity<CompanyResponseDTO> getCompanyById(
+            @PathVariable Long id) {
         return ResponseEntity.ok(companyService.getCompanyById(id));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Company> updateCompany(
+    public ResponseEntity<CompanyResponseDTO> updateCompany(
             @PathVariable Long id,
-            @RequestBody Company company) {
-        return ResponseEntity.ok(companyService.updateCompany(id, company));
+            @Valid @RequestBody CompanyRequestDTO request) {
+        return ResponseEntity.ok(companyService.updateCompany(id, request));
     }
 
     @DeleteMapping("/{id}")
@@ -43,7 +48,7 @@ public class CompanyController {
     }
 
     @GetMapping("/status/{status}")
-    public ResponseEntity<List<Company>> getCompaniesByStatus(
+    public ResponseEntity<List<CompanyResponseDTO>> getCompaniesByStatus(
             @PathVariable CompanyStatus status) {
         return ResponseEntity.ok(companyService.getCompaniesByStatus(status));
     }
