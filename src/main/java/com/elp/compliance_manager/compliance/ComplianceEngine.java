@@ -2,6 +2,7 @@ package com.elp.compliance_manager.compliance;
 
 import com.elp.compliance_manager.asset.Asset;
 import com.elp.compliance_manager.asset.AssetRepository;
+import com.elp.compliance_manager.audit.AuditService;
 import com.elp.compliance_manager.company.Company;
 import com.elp.compliance_manager.company.CompanyRepository;
 import com.elp.compliance_manager.compliance.dto.ComplianceResultDTO;
@@ -30,6 +31,7 @@ public class ComplianceEngine {
     private final ProductRepository productRepository;
     private final ComplianceResultRepository complianceResultRepository;
     private final CoverageService coverageService;
+    private final AuditService auditService;
 
     public ComplianceSummaryDTO runComplianceCheck(Long companyId) {
         Company company = companyRepository.findById(companyId)
@@ -113,6 +115,15 @@ public class ComplianceEngine {
         log.info("Compliance check complete. Under-licensed: {}, " +
                         "Compliant: {}, Over-licensed: {}",
                 underLicensed, compliant, overLicensed);
+
+        auditService.log(
+                "COMPLIANCE_CHECK_RUN",
+                "Company",
+                String.valueOf(companyId),
+                "system",
+                companyId,
+                "Compliance check completed. Products analyzed: " + results.size()
+        );
 
         return ComplianceSummaryDTO.builder()
                 .companyId(companyId)

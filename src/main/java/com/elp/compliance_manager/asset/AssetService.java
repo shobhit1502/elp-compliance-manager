@@ -2,6 +2,7 @@ package com.elp.compliance_manager.asset;
 
 import com.elp.compliance_manager.asset.dto.AssetResponseDTO;
 import com.elp.compliance_manager.asset.dto.IngestionSummaryDTO;
+import com.elp.compliance_manager.audit.AuditService;
 import com.elp.compliance_manager.company.Company;
 import com.elp.compliance_manager.company.CompanyRepository;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ public class AssetService {
 
     private final AssetRepository assetRepository;
     private final CompanyRepository companyRepository;
+    private final AuditService auditService;
 
     public IngestionSummaryDTO ingestADExport(
             Long companyId, MultipartFile file) {
@@ -85,6 +87,15 @@ public class AssetService {
             throw new RuntimeException(
                     "Failed to parse CSV file: " + e.getMessage());
         }
+
+        auditService.log(
+                "ASSET_INGESTION",
+                "Asset",
+                "bulk",
+                "system",
+                companyId,
+                "AD Export ingested. Assets saved: " + assets.size()
+        );
 
         return IngestionSummaryDTO.builder()
                 .totalRows(totalRows)
