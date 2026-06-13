@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import com.elp.compliance_manager.compliance.rules.LicensingRule;
 
 @Service
 @RequiredArgsConstructor
@@ -32,6 +33,7 @@ public class ComplianceEngine {
     private final ComplianceResultRepository complianceResultRepository;
     private final CoverageService coverageService;
     private final AuditService auditService;
+    private final List<com.elp.compliance_manager.compliance.rules.LicensingRule> licensingRules;
 
     public ComplianceSummaryDTO runComplianceCheck(Long companyId) {
         Company company = companyRepository.findById(companyId)
@@ -61,22 +63,42 @@ public class ComplianceEngine {
                     .orElse(null);
             if (product == null) continue;
 
+//            int deployedQty = countDeployments(assets, product);
+//
+//
+//            long coveredAssets = coverage.getCoveredAssets();
+//            long uncoveredAssets = coverage.getUncoveredAssets();
+//
+//            double ratio = coveredAssets > 0 ?
+//                    (double) deployedQty / coveredAssets : 0;
+//
+//            int extrapolatedQty = deployedQty +
+//                    (int) Math.ceil(ratio * uncoveredAssets);
+//
+//
+//            int licensedQty = licensedByProduct.get(productId);
+//            int gap = licensedQty - extrapolatedQty;
+
             int deployedQty = countDeployments(assets, product);
-//            int extrapolatedQty = (int) Math.ceil(
-//                    deployedQty * extrapolationFactor);
-
-            long coveredAssets = coverage.getCoveredAssets();
-            long uncoveredAssets = coverage.getUncoveredAssets();
-
-            double ratio = coveredAssets > 0 ?
-                    (double) deployedQty / coveredAssets : 0;
-
-            int extrapolatedQty = deployedQty +
-                    (int) Math.ceil(ratio * uncoveredAssets);
-
-
+            int extrapolatedQty = (int) Math.ceil(
+                    deployedQty * extrapolationFactor);
             int licensedQty = licensedByProduct.get(productId);
-            int gap = licensedQty - extrapolatedQty;
+
+            int additionalCoverage = 0;
+            for (LicensingRule rule : licensingRules) {
+                int ruleCoverage = rule.applyRule(
+                        product, extrapolatedQty, entitlements);
+                if (ruleCoverage > 0) {
+                    log.info("Rule [{}] provides {} additional coverage " +
+                                    "for {} {}",
+                            rule.getRuleName(), ruleCoverage,
+                            product.getName(), product.getVersion());
+                    additionalCoverage += ruleCoverage;
+                }
+            }
+
+            int effectiveLicensed = licensedQty + additionalCoverage;
+            int gap = effectiveLicensed - extrapolatedQty;
 
             ComplianceStatus status;
             if (gap == 0) status = ComplianceStatus.COMPLIANT;
@@ -91,7 +113,7 @@ public class ComplianceEngine {
             if (existing != null) {
                 existing.setDeployedQuantity(deployedQty);
                 existing.setExtrapolatedQuantity(extrapolatedQty);
-                existing.setLicensedQuantity(licensedQty);
+                existing.setLicensedQuantity(effectiveLicensed);
                 existing.setGap(gap);
                 existing.setStatus(status);
                 result = existing;
@@ -101,7 +123,7 @@ public class ComplianceEngine {
                         .product(product)
                         .deployedQuantity(deployedQty)
                         .extrapolatedQuantity(extrapolatedQty)
-                        .licensedQuantity(licensedQty)
+                        .licensedQuantity(effectiveLicensed)  // ← change this
                         .gap(gap)
                         .status(status)
                         .build();
