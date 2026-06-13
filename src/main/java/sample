@@ -7,7 +7,6 @@ import com.elp.compliance_manager.company.Company;
 import com.elp.compliance_manager.company.CompanyRepository;
 import com.elp.compliance_manager.compliance.dto.ComplianceResultDTO;
 import com.elp.compliance_manager.compliance.dto.ComplianceSummaryDTO;
-import com.elp.compliance_manager.compliance.rules.LicensingRule;
 import com.elp.compliance_manager.coverage.CoverageService;
 import com.elp.compliance_manager.deployment.AssetDeploymentRepository;
 import com.elp.compliance_manager.entitlement.Entitlement;
@@ -22,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import com.elp.compliance_manager.compliance.rules.LicensingRule;
 
 @Service
 @RequiredArgsConstructor
@@ -35,7 +35,7 @@ public class ComplianceEngine {
     private final ComplianceResultRepository complianceResultRepository;
     private final CoverageService coverageService;
     private final AuditService auditService;
-    private final List<LicensingRule> licensingRules;
+    private final List<com.elp.compliance_manager.compliance.rules.LicensingRule> licensingRules;
     private final AssetDeploymentRepository deploymentRepository;
 
     public ComplianceSummaryDTO runComplianceCheck(Long companyId) {
@@ -47,6 +47,7 @@ public class ComplianceEngine {
                 company.getName());
 
         var coverage = coverageService.calculateCoverage(companyId);
+        double extrapolationFactor = coverage.getExtrapolationFactor();
 
         List<Entitlement> entitlements = entitlementRepository
                 .findByCompanyId(companyId);
@@ -56,19 +57,7 @@ public class ComplianceEngine {
                         e -> e.getProduct().getId(),
                         Collectors.summingInt(Entitlement::getQuantity)));
 
-        List<Asset> assets =
-                assetRepository.findByCompanyId(companyId);
-
-        List<Asset> coveredAssets = assets.stream()
-                .filter(Asset::isHasScriptOutput)
-                .collect(Collectors.toList());
-
-        long totalAssets = assets.size();
-        long coveredCount = coveredAssets.size();
-        long uncoveredCount = totalAssets - coveredCount;
-
-        log.info("Assets: total={}, covered={}, uncovered={}",
-                totalAssets, coveredCount, uncoveredCount);
+        List<Asset> assets = assetRepository.findByCompanyId(companyId);
 
         List<ComplianceResult> results = new ArrayList<>();
 
@@ -77,46 +66,25 @@ public class ComplianceEngine {
                     .orElse(null);
             if (product == null) continue;
 
-            boolean isOsProduct =
-                    product.getCategory() == ProductCategory.DESKTOP_OS
-                            || product.getCategory() ==
-                            ProductCategory.SERVER_OS;
+//            int deployedQty = countDeployments(assets, product);
+//
+//
+//            long coveredAssets = coverage.getCoveredAssets();
+//            long uncoveredAssets = coverage.getUncoveredAssets();
+//
+//            double ratio = coveredAssets > 0 ?
+//                    (double) deployedQty / coveredAssets : 0;
+//
+//            int extrapolatedQty = deployedQty +
+//                    (int) Math.ceil(ratio * uncoveredAssets);
+//
+//
+//            int licensedQty = licensedByProduct.get(productId);
+//            int gap = licensedQty - extrapolatedQty;
 
-            int deployedQty;
-            int extrapolatedQty;
-
-            if (isOsProduct) {
-                deployedQty = countDeployments(
-                        assets, product, companyId);
-                extrapolatedQty = deployedQty;
-                log.info("[OS] {} {} {} — found in {} machines",
-                        product.getName(), product.getVersion(),
-                        product.getEdition(), deployedQty);
-            } else {
-                int deployedInCovered = countDeployments(
-                        coveredAssets, product, companyId);
-
-                double deploymentRate = coveredCount > 0 ?
-                        (double) deployedInCovered / coveredCount
-                        : 0;
-
-                int extrapolatedFromUncovered = (int) Math.ceil(
-                        deploymentRate * uncoveredCount);
-
-                deployedQty = deployedInCovered;
-                extrapolatedQty = deployedInCovered
-                        + extrapolatedFromUncovered;
-
-                log.info("[SW] {} {} {} — covered: {}, rate: {}%," +
-                                " extrapolated: {}, total: {}",
-                        product.getName(), product.getVersion(),
-                        product.getEdition(),
-                        deployedInCovered,
-                        Math.round(deploymentRate * 100),
-                        extrapolatedFromUncovered,
-                        extrapolatedQty);
-            }
-
+            int deployedQty = countDeployments(assets, product);
+            int extrapolatedQty = (int) Math.ceil(
+                    deployedQty * extrapolationFactor);
             int licensedQty = licensedByProduct.get(productId);
 
             int additionalCoverage = 0;
@@ -124,8 +92,8 @@ public class ComplianceEngine {
                 int ruleCoverage = rule.applyRule(
                         product, extrapolatedQty, entitlements);
                 if (ruleCoverage > 0) {
-                    log.info("Rule [{}] provides {} additional " +
-                                    "coverage for {} {}",
+                    log.info("Rule [{}] provides {} additional coverage " +
+                                    "for {} {}",
                             rule.getRuleName(), ruleCoverage,
                             product.getName(), product.getVersion());
                     additionalCoverage += ruleCoverage;
@@ -158,7 +126,7 @@ public class ComplianceEngine {
                         .product(product)
                         .deployedQuantity(deployedQty)
                         .extrapolatedQuantity(extrapolatedQty)
-                        .licensedQuantity(effectiveLicensed)
+                        .licensedQuantity(effectiveLicensed)  // ← change this
                         .gap(gap)
                         .status(status)
                         .build();
@@ -180,8 +148,9 @@ public class ComplianceEngine {
                 .filter(r -> r.getStatus() ==
                         ComplianceStatus.OVER_LICENSED).count();
 
-        log.info("Compliance complete. Under: {}, Compliant: {}," +
-                " Over: {}", underLicensed, compliant, overLicensed);
+        log.info("Compliance check complete. Under-licensed: {}, " +
+                        "Compliant: {}, Over-licensed: {}",
+                underLicensed, compliant, overLicensed);
 
         auditService.log(
                 "COMPLIANCE_CHECK_RUN",
@@ -189,8 +158,8 @@ public class ComplianceEngine {
                 String.valueOf(companyId),
                 "system",
                 companyId,
-                "Compliance check completed. Products analyzed: "
-                        + results.size());
+                "Compliance check completed. Products analyzed: " + results.size()
+        );
 
         return ComplianceSummaryDTO.builder()
                 .companyId(companyId)
@@ -200,8 +169,7 @@ public class ComplianceEngine {
                 .underLicensedProducts((int) underLicensed)
                 .overLicensedProducts((int) overLicensed)
                 .coveragePercentage(coverage.getCoveragePercentage())
-                .extrapolationFactor(
-                        coverage.getExtrapolationFactor())
+                .extrapolationFactor(extrapolationFactor)
                 .results(resultDTOs)
                 .build();
     }
@@ -213,13 +181,18 @@ public class ComplianceEngine {
                 .collect(Collectors.toList());
     }
 
+//    private int countDeployments(List<Asset> assets, Product product) {
+//        return (int) assets.stream()
+//                .filter(a -> matchesProduct(a, product))
+//                .count();
+//    }
+
     private int countDeployments(List<Asset> assets,
                                  Product product, Long companyId) {
 
         boolean isOsProduct =
-                product.getCategory() == ProductCategory.DESKTOP_OS
-                        || product.getCategory() ==
-                        ProductCategory.SERVER_OS;
+                product.getCategory() == ProductCategory.DESKTOP_OS ||
+                        product.getCategory() == ProductCategory.SERVER_OS;
 
         if (isOsProduct) {
             return (int) assets.stream()
@@ -231,22 +204,31 @@ public class ComplianceEngine {
                             companyId, product.getName())
                     .stream()
                     .filter(d -> {
-                        boolean versionMatch =
-                                product.getVersion() == null
-                                        || product.getVersion().isEmpty()
-                                        || product.getVersion().equals(
-                                        d.getProductVersion());
-                        boolean editionMatch =
-                                product.getEdition() == null
-                                        || product.getEdition().isEmpty()
-                                        || product.getEdition()
-                                        .equalsIgnoreCase(
-                                                d.getProductEdition());
+                        boolean versionMatch = product.getVersion() == null
+                                || product.getVersion().isEmpty()
+                                || product.getVersion().equals(
+                                d.getProductVersion());
+                        boolean editionMatch = product.getEdition() == null
+                                || product.getEdition().isEmpty()
+                                || product.getEdition()
+                                .equalsIgnoreCase(
+                                        d.getProductEdition());
                         return versionMatch && editionMatch;
                     })
                     .count();
         }
     }
+
+//    private boolean matchesProduct(Asset asset, Product product) {
+//        if (asset.getOperatingSystem() == null) return false;
+//        String os = asset.getOperatingSystem().toLowerCase();
+//        String productName = product.getName().toLowerCase();
+//        String version = product.getVersion() != null ?
+//                product.getVersion().toLowerCase() : "";
+//        return os.contains(productName) ||
+//                (os.contains("windows") && productName.contains("windows")
+//                        && (version.isEmpty() || os.contains(version)));
+//    }
 
     private boolean matchesProduct(Asset asset, Product product) {
         if (asset.getOperatingSystem() == null) return false;
@@ -258,10 +240,8 @@ public class ComplianceEngine {
                 product.getEdition().toLowerCase() : "";
 
         if (!os.contains(productName)) return false;
-        if (!version.isEmpty() && !os.contains(version))
-            return false;
-        if (!edition.isEmpty() && !os.contains(edition))
-            return false;
+        if (!version.isEmpty() && !os.contains(version)) return false;
+        if (!edition.isEmpty() && !os.contains(edition)) return false;
         return true;
     }
 

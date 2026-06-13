@@ -28,8 +28,11 @@ public class ServiceNowConnector implements DataConnector {
         log.info("[ServiceNowConnector] Fetching data for " +
                 "company {}", companyId);
 
+//        List<Map<String, Object>> rawData =
+//                mockDataSource.getServiceNowData();
+
         List<Map<String, Object>> rawData =
-                mockDataSource.getServiceNowData();
+                mockDataSource.getServiceNowData(companyId);
 
         List<NormalizedAsset> normalized = new ArrayList<>();
 

@@ -29,8 +29,11 @@ public class VMwareConnector implements DataConnector {
         log.info("[VMwareConnector] Fetching data for company {}",
                 companyId);
 
+//        List<Map<String, Object>> rawData =
+//                mockDataSource.getVMwareData();
+
         List<Map<String, Object>> rawData =
-                mockDataSource.getVMwareData();
+                mockDataSource.getVMwareData(companyId);
 
         List<NormalizedAsset> normalized = new ArrayList<>();
 

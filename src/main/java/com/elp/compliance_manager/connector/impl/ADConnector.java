@@ -28,8 +28,11 @@ public class ADConnector implements DataConnector {
         log.info("[ADConnector] Fetching data for company {}",
                 companyId);
 
+//        List<Map<String, Object>> rawData =
+//                mockDataSource.getADData();
+
         List<Map<String, Object>> rawData =
-                mockDataSource.getADData();
+                mockDataSource.getADData(companyId);
 
         List<NormalizedAsset> normalized = new ArrayList<>();
 

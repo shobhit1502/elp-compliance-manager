@@ -28,8 +28,11 @@ public class SCCMConnector implements DataConnector {
         log.info("[SCCMConnector] Fetching data for company {}",
                 companyId);
 
+//        List<Map<String, Object>> rawData =
+//                mockDataSource.getSCCMData();
+
         List<Map<String, Object>> rawData =
-                mockDataSource.getSCCMData();
+                mockDataSource.getSCCMData(companyId);
 
         List<NormalizedAsset> normalized = new ArrayList<>();
 
