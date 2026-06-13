@@ -62,8 +62,19 @@ public class ComplianceEngine {
             if (product == null) continue;
 
             int deployedQty = countDeployments(assets, product);
-            int extrapolatedQty = (int) Math.ceil(
-                    deployedQty * extrapolationFactor);
+//            int extrapolatedQty = (int) Math.ceil(
+//                    deployedQty * extrapolationFactor);
+
+            long coveredAssets = coverage.getCoveredAssets();
+            long uncoveredAssets = coverage.getUncoveredAssets();
+
+            double ratio = coveredAssets > 0 ?
+                    (double) deployedQty / coveredAssets : 0;
+
+            int extrapolatedQty = deployedQty +
+                    (int) Math.ceil(ratio * uncoveredAssets);
+
+
             int licensedQty = licensedByProduct.get(productId);
             int gap = licensedQty - extrapolatedQty;
 
