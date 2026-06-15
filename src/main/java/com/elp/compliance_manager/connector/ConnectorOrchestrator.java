@@ -3,6 +3,7 @@ package com.elp.compliance_manager.connector;
 import com.elp.compliance_manager.asset.*;
 import com.elp.compliance_manager.company.Company;
 import com.elp.compliance_manager.company.CompanyRepository;
+import com.elp.compliance_manager.coverage.CoverageService;
 import com.elp.compliance_manager.deployment.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +20,7 @@ public class ConnectorOrchestrator {
     private final AssetRepository assetRepository;
     private final AssetDeploymentRepository deploymentRepository;
     private final CompanyRepository companyRepository;
+    private final CoverageService coverageService;
 
     public ConnectorSyncResult sync(Long companyId,
                                     ConnectorType type) {
@@ -124,6 +126,11 @@ public class ConnectorOrchestrator {
                         "deployments saved: {}",
                 assetsSaved, assetsSkipped, deploymentsSaved);
 
+        // Evict cache after sync — data has changed
+        coverageService.evictCoverageCache(companyId);
+        log.info("Cache evicted for company {} after {} sync",
+                companyId, type);
+
         return ConnectorSyncResult.builder()
                 .connectorType(type)
                 .assetsProcessed(normalizedAssets.size())
@@ -146,4 +153,8 @@ public class ConnectorOrchestrator {
                 .map(type -> sync(companyId, type))
                 .collect(Collectors.toList());
     }
+
+
+
+
 }

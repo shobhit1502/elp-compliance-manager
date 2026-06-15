@@ -1,11 +1,17 @@
 package com.elp.compliance_manager.coverage;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.io.Serializable;
 
 @Data
 @Builder
-public class CoverageResponseDTO {
+@NoArgsConstructor
+@AllArgsConstructor
+public class CoverageResponseDTO implements Serializable {
 
     private Long companyId;
     private String companyName;

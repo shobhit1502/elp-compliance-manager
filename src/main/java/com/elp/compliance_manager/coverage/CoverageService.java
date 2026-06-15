@@ -1,27 +1,30 @@
 package com.elp.compliance_manager.coverage;
 
-import com.elp.compliance_manager.asset.Asset;
 import com.elp.compliance_manager.asset.AssetRepository;
-import com.elp.compliance_manager.asset.AssetType;
-import com.elp.compliance_manager.company.Company;
 import com.elp.compliance_manager.company.CompanyRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
-import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CoverageService {
 
     private final AssetRepository assetRepository;
     private final CompanyRepository companyRepository;
 
+    @Cacheable(value = "coverage", key = "#companyId")
     public CoverageResponseDTO calculateCoverage(Long companyId) {
+        log.info("Calculating coverage for company {} " +
+                "(cache miss — querying database)", companyId);
+
         companyRepository.findById(companyId)
                 .orElseThrow(() -> new RuntimeException(
                         "Company not found: " + companyId));
 
-        // All counts done in database — no data loaded to memory
         long totalAssets = assetRepository
                 .countByCompanyId(companyId);
         long coveredAssets = assetRepository
@@ -65,5 +68,11 @@ public class CoverageService {
                 .coveredServers((int) coveredServers)
                 .coverageStatus(status)
                 .build();
+    }
+
+    @CacheEvict(value = "coverage", key = "#companyId")
+    public void evictCoverageCache(Long companyId) {
+        log.info("Evicting coverage cache for company {}",
+                companyId);
     }
 }
