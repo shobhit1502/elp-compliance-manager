@@ -58,10 +58,8 @@ public class ComplianceEngine {
 
         List<Asset> assets =
                 assetRepository.findByCompanyId(companyId);
-
-        List<Asset> coveredAssets = assets.stream()
-                .filter(Asset::isHasScriptOutput)
-                .collect(Collectors.toList());
+        List<Asset> coveredAssets =
+                assetRepository.findCoveredByCompanyId(companyId);
 
         long totalAssets = assets.size();
         long coveredCount = coveredAssets.size();
@@ -72,10 +70,19 @@ public class ComplianceEngine {
 
         List<ComplianceResult> results = new ArrayList<>();
 
-        for (Long productId : licensedByProduct.keySet()) {
-            Product product = productRepository.findById(productId)
-                    .orElse(null);
-            if (product == null) continue;
+
+            List<Long> productIds = new ArrayList<>(
+                    licensedByProduct.keySet());
+            Map<Long, Product> productMap = productRepository
+                    .findAllById(productIds)
+                    .stream()
+                    .collect(Collectors.toMap(
+                            Product::getId,
+                            p -> p));
+
+            for (Long productId : licensedByProduct.keySet()) {
+                Product product = productMap.get(productId);
+                if (product == null) continue;
 
             boolean isOsProduct =
                     product.getCategory() == ProductCategory.DESKTOP_OS

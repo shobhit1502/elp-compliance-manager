@@ -8,8 +8,22 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
+
 @Entity
-@Table(name = "assets")
+@Table(name = "assets",
+        indexes = {
+                @Index(name = "idx_assets_company_id",
+                        columnList = "company_id"),
+                @Index(name = "idx_assets_has_script",
+                        columnList = "has_script_output"),
+                @Index(name = "idx_assets_company_script",
+                        columnList = "company_id,has_script_output")
+        },
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uq_machine_company",
+                        columnNames = {"machine_name", "company_id"})
+        })
 @Data
 @Builder
 @NoArgsConstructor
@@ -61,4 +75,7 @@ public class Asset {
         this.createdAt = LocalDateTime.now();
         this.isInScope = true;
     }
+
+
+
 }

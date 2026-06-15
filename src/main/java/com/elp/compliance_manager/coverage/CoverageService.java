@@ -17,67 +17,53 @@ public class CoverageService {
     private final CompanyRepository companyRepository;
 
     public CoverageResponseDTO calculateCoverage(Long companyId) {
-        Company company = companyRepository.findById(companyId)
+        companyRepository.findById(companyId)
                 .orElseThrow(() -> new RuntimeException(
-                        "Company not found with id: " + companyId));
+                        "Company not found: " + companyId));
 
-        List<Asset> allAssets = assetRepository
-                .findByCompanyId(companyId);
-
-        long totalAssets = allAssets.size();
-        long coveredAssets = allAssets.stream()
-                .filter(Asset::isHasScriptOutput)
-                .count();
+        // All counts done in database — no data loaded to memory
+        long totalAssets = assetRepository
+                .countByCompanyId(companyId);
+        long coveredAssets = assetRepository
+                .countCoveredByCompanyId(companyId);
         long uncoveredAssets = totalAssets - coveredAssets;
 
-        double coveragePercentage = totalAssets > 0
-                ? (double) coveredAssets / totalAssets * 100
-                : 0.0;
+        long totalWorkstations = assetRepository
+                .countWorkstationsByCompanyId(companyId);
+        long coveredWorkstations = assetRepository
+                .countCoveredWorkstationsByCompanyId(companyId);
 
-        double extrapolationFactor = coveredAssets > 0
-                ? (double) totalAssets / coveredAssets
-                : 1.0;
+        long totalServers = assetRepository
+                .countServersByCompanyId(companyId);
+        long coveredServers = assetRepository
+                .countCoveredServersByCompanyId(companyId);
 
-        long totalWorkstations = allAssets.stream()
-                .filter(a -> a.getAssetType() == AssetType.WORKSTATION)
-                .count();
-        long coveredWorkstations = allAssets.stream()
-                .filter(a -> a.getAssetType() == AssetType.WORKSTATION
-                        && a.isHasScriptOutput())
-                .count();
+        double coveragePercentage = totalAssets > 0 ?
+                Math.round((double) coveredAssets /
+                           totalAssets * 10000.0) / 100.0 : 0.0;
 
-        long totalServers = allAssets.stream()
-                .filter(a -> a.getAssetType() == AssetType.SERVER)
-                .count();
-        long coveredServers = allAssets.stream()
-                .filter(a -> a.getAssetType() == AssetType.SERVER
-                        && a.isHasScriptOutput())
-                .count();
+        double extrapolationFactor = coveredAssets > 0 ?
+                Math.round((double) totalAssets /
+                           coveredAssets * 100.0) / 100.0 : 1.0;
 
-        String coverageStatus = getCoverageStatus(coveragePercentage);
+        String status;
+        if (coveragePercentage >= 90) status = "EXCELLENT";
+        else if (coveragePercentage >= 75) status = "GOOD";
+        else if (coveragePercentage >= 60) status = "ACCEPTABLE";
+        else status = "INSUFFICIENT";
 
         return CoverageResponseDTO.builder()
                 .companyId(companyId)
-                .companyName(company.getName())
-                .totalAssets(totalAssets)
-                .coveredAssets(coveredAssets)
-                .uncoveredAssets(uncoveredAssets)
-                .coveragePercentage(Math.round(
-                        coveragePercentage * 100.0) / 100.0)
-                .extrapolationFactor(Math.round(
-                        extrapolationFactor * 100.0) / 100.0)
-                .totalWorkstations(totalWorkstations)
-                .coveredWorkstations(coveredWorkstations)
-                .totalServers(totalServers)
-                .coveredServers(coveredServers)
-                .coverageStatus(coverageStatus)
+                .totalAssets((int) totalAssets)
+                .coveredAssets((int) coveredAssets)
+                .uncoveredAssets((int) uncoveredAssets)
+                .coveragePercentage(coveragePercentage)
+                .extrapolationFactor(extrapolationFactor)
+                .totalWorkstations((int) totalWorkstations)
+                .coveredWorkstations((int) coveredWorkstations)
+                .totalServers((int) totalServers)
+                .coveredServers((int) coveredServers)
+                .coverageStatus(status)
                 .build();
-    }
-
-    private String getCoverageStatus(double percentage) {
-        if (percentage >= 90) return "EXCELLENT";
-        if (percentage >= 75) return "GOOD";
-        if (percentage >= 50) return "ACCEPTABLE";
-        return "INSUFFICIENT";
     }
 }
