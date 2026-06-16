@@ -872,3 +872,229 @@ Sample CSV files in `/sample-data/`:
 
 **Shobhit** — Microsoft License Contract Compliance, EY
 GitHub: [shobhit1502](https://github.com/shobhit1502)
+## Production Readiness Enhancements
+
+Beyond the core 11 phases, the system has been hardened with production-grade infrastructure patterns: database query optimization, distributed caching, and asynchronous event-driven processing.
+
+```
+Phase 12 — Query Optimization + Indexes
+Phase 13 — Redis Caching
+Phase 14 — Kafka Async Processing
+```
+
+---
+
+### Query Optimization + Indexes
+
+**Problem:** With only primary key indexes, every company-scoped query (`WHERE company_id = ?`) performed a full table scan. The Compliance Engine also suffered from an N+1 query pattern — fetching each product individually instead of in bulk. Coverage calculation loaded entire asset lists into memory just to count them.
+
+**What was changed:**
+
+```
+14 custom indexes added:
+  assets:              company_id, has_script_output,
+                       company_id+has_script_output (composite),
+                       machine_name+company_id (composite)
+  asset_deployments:   company_id, asset_id, product_name,
+                       company_id+product_name (composite)
+  compliance_results:  company_id, status
+  entitlements:        company_id, product_id
+  audit_logs:          company_id, created_at
+```
+
+**N+1 fix in ComplianceEngine:**
+
+```java
+// Before — N queries, one per product
+for (Long productId : licensedByProduct.keySet()) {
+    Product product = productRepository.findById(productId)
+            .orElse(null);
+}
+
+// After — 1 query for all products
+List<Long> productIds = new ArrayList<>(licensedByProduct.keySet());
+Map<Long, Product> productMap = productRepository
+        .findAllById(productIds)
+        .stream()
+        .collect(Collectors.toMap(Product::getId, p -> p));
+```
+
+**Count queries instead of loading full lists:**
+
+```java
+// Before — loads ALL assets to count in Java
+List<Asset> assets = assetRepository.findByCompanyId(companyId);
+long coveredCount = assets.stream()
+        .filter(Asset::isHasScriptOutput).count();
+
+// After — database does the counting
+long coveredCount = assetRepository.countCoveredByCompanyId(companyId);
+```
+
+New repository methods added: `countByCompanyId`, `countCoveredByCompanyId`, `countWorkstationsByCompanyId`, `countCoveredWorkstationsByCompanyId`, `countServersByCompanyId`, `countCoveredServersByCompanyId`, `findCoveredByCompanyId`.
+
+**Unique constraint added** to prevent duplicate machine records during concurrent connector syncs:
+
+```java
+@Table(name = "assets",
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uq_machine_company",
+            columnNames = {"machine_name", "company_id"})
+    })
+```
+
+**Verification:** At the current dataset size (33 assets), PostgreSQL's query planner correctly chooses sequential scan over index scan — this is expected optimizer behavior for small tables, not a failure of indexing. Verified with `EXPLAIN ANALYZE` and by forcing index usage via `SET enable_seqscan = OFF`. At production scale (10,000+ assets) the same indexes will be selected automatically.
+
+---
+
+### Redis Caching
+
+**Problem:** The coverage analysis endpoint executed 6 COUNT queries against PostgreSQL on every request, even when called repeatedly with no underlying data change.
+
+**What was added:**
+
+```
+Dependency:    spring-boot-starter-data-redis
+Cache config:  com.elp.compliance_manager.config.RedisConfig
+Cached method: CoverageService.calculateCoverage()
+Eviction:      CoverageService.evictCoverageCache()
+              called from ConnectorOrchestrator after every sync
+```
+
+**Cache configuration:**
+
+```
+Cache Name         Key              TTL       Eviction Trigger
+─────────────────────────────────────────────────────────────
+coverage            company:{id}    1 hour    After connector sync
+complianceResults   company:{id}    30 min    (planned)
+products            catalog         24 hours  Never (rarely changes)
+```
+
+**Behavior:**
+
+```java
+@Cacheable(value = "coverage", key = "#companyId")
+public CoverageResponseDTO calculateCoverage(Long companyId) {
+    // Only executes on cache miss — 6 DB queries
+}
+
+@CacheEvict(value = "coverage", key = "#companyId")
+public void evictCoverageCache(Long companyId) {
+    // Called after connector sync — forces fresh data next read
+}
+```
+
+**Verified results:**
+
+```
+Cache MISS (first call):  6 Hibernate COUNT queries, ~50ms
+Cache HIT (second call):  0 Hibernate queries, served from Redis, ~2ms
+Cache EVICT (after sync): Redis key deleted automatically,
+                          next request is a fresh MISS
+```
+
+All DTOs cached in Redis implement `Serializable` and include `@NoArgsConstructor` / `@AllArgsConstructor` to support Jackson-based deserialization via `GenericJackson2JsonRedisSerializer`.
+
+---
+
+### Kafka Async Processing
+
+**Problem:** `POST /api/connectors/sync-all/{companyId}` blocked the HTTP request thread for the full duration of all 4 connector syncs. At enterprise scale (thousands of assets) this would cause client-side timeouts.
+
+**What was added:**
+
+```
+Dependency:  spring-kafka
+Mode:        KRaft (Kafka 4.x — no Zookeeper dependency)
+Topics:      connector-sync-requests   (3 partitions)
+            connector-sync-completed  (3 partitions)
+            compliance-run-requests   (3 partitions)
+            audit-events              (1 partition)
+```
+
+**New package:** `com.elp.compliance_manager.job`
+
+```
+SyncJob.java            — entity tracking job lifecycle
+JobStatus.java          — enum: QUEUED, IN_PROGRESS, COMPLETED, FAILED
+SyncJobRepository.java  — JPA repository for sync_jobs table
+SyncRequestEvent.java   — Kafka message payload (Serializable)
+SyncEventProducer.java  — publishes sync requests, creates SyncJob record
+SyncEventConsumer.java  — @KafkaListener, runs actual sync, updates status
+SyncJobController.java  — exposes job request + polling endpoints
+```
+
+**Async flow:**
+
+```
+POST /api/jobs/sync/{companyId}?connectorType=ALL
+        ↓
+SyncEventProducer publishes event to Kafka, creates SyncJob (QUEUED)
+        ↓
+Returns immediately: 202 Accepted { jobId, status: "QUEUED" }
+        ↓
+SyncEventConsumer (background thread) receives event from Kafka
+        ↓
+Status updated → IN_PROGRESS
+        ↓
+ConnectorOrchestrator.syncAll() runs (same logic as synchronous sync)
+        ↓
+Status updated → COMPLETED (or FAILED with errorMessage)
+        ↓
+Coverage Redis cache evicted as part of normal sync flow
+        ↓
+Client polls: GET /api/jobs/{jobId} → final result
+```
+
+**New endpoints:**
+
+```
+POST /api/jobs/sync/{companyId}?connectorType=ALL   — queue async sync
+GET  /api/jobs/{jobId}                              — poll job status
+GET  /api/jobs/company/{companyId}                  — job history
+```
+
+**Verified end-to-end:** A real test run completed in 474ms — `POST /api/jobs/sync/3` returned `202 Accepted` with a jobId instantly; polling `GET /api/jobs/{jobId}` showed `COMPLETED` with `assetsProcessed: 20`. Console logs confirmed the full trace: producer publish → consumer receive → status IN_PROGRESS → ConnectorOrchestrator ran all 4 connectors → deduplication skipped existing assets → Redis cache evicted → status COMPLETED → job saved to PostgreSQL.
+
+This demonstrates the three production features working together in a single flow: Kafka triggers the sync, the sync evicts the Redis cache, and the optimized count queries serve the next coverage request.
+
+---
+
+### Updated Database Schema
+
+```
+sync_jobs
+  job_id (PK, UUID), company_id, connector_type, status,
+  assets_processed, assets_saved, deployments_saved,
+  error_message, requested_at, completed_at
+```
+
+---
+
+### Production Readiness — Interview Talking Points
+
+**On Query Optimization:**
+"I added 14 indexes on frequently filtered columns and fixed an N+1 query in the Compliance Engine by batch-loading products with `findAllById` instead of looping `findById`. I also replaced full asset list loads with COUNT queries at the database level. PostgreSQL's planner currently chooses sequential scan over index scan because our dataset is small — that's correct optimizer behavior, not a sign the indexes aren't working. I verified this with `EXPLAIN ANALYZE` and by explicitly disabling sequential scan to confirm the index scan plan exists and is valid."
+
+**On Redis:**
+"The coverage endpoint was hitting PostgreSQL with 6 COUNT queries on every call. I cached the result in Redis with a 1-hour TTL using Spring's `@Cacheable`, and explicitly evict that cache with `@CacheEvict` whenever a connector sync changes the underlying asset data. This took the response time from about 50ms to about 2ms on cache hits, while guaranteeing the client never sees stale data after a sync."
+
+**On Kafka:**
+"Connector sync was a synchronous, blocking call — fine for our test data but a problem at real enterprise scale with thousands of assets. I moved it to an async event-driven model using Kafka in KRaft mode. The API now returns a 202 with a jobId immediately, a background consumer does the actual work, and job state — QUEUED, IN_PROGRESS, COMPLETED, FAILED — is persisted in PostgreSQL so the client can poll for status. I tested the full round trip and confirmed the producer, consumer, deduplication logic, and Redis cache eviction all fire correctly within the async flow."
+
+**On the integration story:**
+"These three features aren't isolated — they compose. When the Kafka consumer finishes a sync in the background, it calls the same `ConnectorOrchestrator` used by the synchronous path, which evicts the Redis coverage cache. So whether a sync happens via the blocking endpoint or the async Kafka-backed one, the next coverage read is guaranteed fresh, and that read itself benefits from the optimized count queries underneath."
+
+---
+
+### What's Next (Planned, Not Yet Implemented)
+
+```
+MongoDB raw connector storage — persist raw pre-normalization
+  responses per sync for audit/reprocessing capability
+Centralized logging (Graylog / Last9) — structured log shipping
+  across instances for production observability
+Refresh token endpoint — shorter-lived access tokens in production
+SXSSFWorkbook — streaming Excel generation for large ELP reports
+```
