@@ -1098,3 +1098,87 @@ Centralized logging (Graylog / Last9) — structured log shipping
 Refresh token endpoint — shorter-lived access tokens in production
 SXSSFWorkbook — streaming Excel generation for large ELP reports
 ```
+### Structured JSON Logging
+
+**Problem:** Logs only existed in the IntelliJ console as plain text, lost on restart. There was no way to trace all log lines belonging to a single HTTP request, and no way to filter logs by company across a multi-instance deployment. Plain text logs also can't be queried or indexed by a log aggregation platform.
+
+**What was added:**
+
+```
+Dependency:   logstash-logback-encoder
+Config:       src/main/resources/logback-spring.xml
+New package:  com.elp.compliance_manager.logging
+  RequestLoggingFilter.java — generates a per-request requestId via MDC
+```
+
+**Dual-output Logback configuration:**
+
+```
+CONSOLE appender   → human-readable pattern, unchanged dev experience
+JSON_FILE appender → structured JSON, one object per log line,
+                     written to logs/elp-compliance-manager.json.log,
+                     rotated daily, 7 days retention
+```
+
+**Request tracing via MDC (Mapped Diagnostic Context):**
+
+```java
+@Component
+public class RequestLoggingFilter extends OncePerRequestFilter {
+    protected void doFilterInternal(HttpServletRequest request,
+            HttpServletResponse response, FilterChain filterChain) {
+        String requestId = UUID.randomUUID().toString().substring(0, 8);
+        MDC.put("requestId", requestId);
+        response.setHeader("X-Request-Id", requestId);
+        try {
+            filterChain.doFilter(request, response);
+        } finally {
+            MDC.clear();
+        }
+    }
+}
+```
+
+Every log line written during the lifetime of a single HTTP request automatically carries the same `requestId` — without it being passed manually through every method call down the stack. `companyId` is similarly injected into MDC at the entry point of `ComplianceEngine` and `ConnectorOrchestrator`, so every log line in those flows is automatically tagged with which company it relates to.
+
+**Resulting log shape:**
+
+```json
+{
+  "@timestamp": "2026-06-16T18:34:55.368543+05:30",
+  "@version": "1",
+  "message": "Compliance complete. Under: 2, Compliant: 1, Over: 6",
+  "logger_name": "com.elp.compliance_manager.compliance.ComplianceEngine",
+  "thread_name": "http-nio-8080-exec-2",
+  "level": "INFO",
+  "level_value": 20000,
+  "companyId": "3",
+  "requestId": "7e6f4c42",
+  "app": "compliance-manager",
+  "env": "local"
+}
+```
+
+**Verified:** A single `POST /api/compliance/run/3` request produced 17 distinct log lines — one per rule evaluation, product calculation, and the final summary — all sharing the same `requestId`. Running `grep "7e6f4c42" logs/elp-compliance-manager.json.log` isolates the complete trace of that one request out of the full log file, regardless of how many other requests were being processed concurrently.
+
+```bash
+grep "7e6f4c42" logs/elp-compliance-manager.json.log | wc -l
+# → 17
+```
+
+**Why this format matters:** This JSON shape is exactly what Graylog's GELF input, Last9, Datadog, and the ELK stack all expect as input. Wiring this up to a real centralized logging platform later is purely a transport/shipping configuration change (e.g. adding a GELF or Filebeat appender) — no application code changes are required, because the structured logging foundation is already in place.
+
+**Interview talking point:**
+"I implemented structured JSON logging using Logback's Logstash encoder, with a servlet filter that generates a short requestId via MDC at the start of every HTTP request and clears it at the end. Every log line written during that request automatically carries the same requestId without me threading it through every method signature. I verified this by running a single compliance check and confirming all 17 resulting log lines — covering every licensing rule evaluation and product calculation — shared one requestId, so I could isolate the complete trace of that one request with a single grep. This is the same mechanism distributed tracing tools and log aggregation platforms like Graylog or Last9 rely on; since the output is already valid structured JSON with consistent fields, connecting it to a real aggregator later is a configuration change, not a rewrite."
+
+---
+
+### Updated Production Readiness Status
+
+```
+✅ Query Optimization  — indexes, N+1 fix, count queries
+✅ Redis Caching        — coverage cached, evicted on sync
+✅ Kafka Async          — non-blocking sync, job status tracking
+✅ Structured Logging   — JSON logs, MDC request tracing
+⏳ MongoDB              — raw connector storage (planned, independent feature)
+```
