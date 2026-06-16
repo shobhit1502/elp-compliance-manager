@@ -7,6 +7,7 @@ import com.elp.compliance_manager.coverage.CoverageService;
 import com.elp.compliance_manager.deployment.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -24,6 +25,9 @@ public class ConnectorOrchestrator {
 
     public ConnectorSyncResult sync(Long companyId,
                                     ConnectorType type) {
+
+        MDC.put("companyId", String.valueOf(companyId));
+
         Company company = companyRepository.findById(companyId)
                 .orElseThrow(() -> new RuntimeException(
                         "Company not found: " + companyId));

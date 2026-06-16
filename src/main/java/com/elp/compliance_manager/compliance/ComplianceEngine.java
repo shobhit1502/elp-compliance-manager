@@ -17,6 +17,7 @@ import com.elp.compliance_manager.product.ProductCategory;
 import com.elp.compliance_manager.product.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +40,8 @@ public class ComplianceEngine {
     private final AssetDeploymentRepository deploymentRepository;
 
     public ComplianceSummaryDTO runComplianceCheck(Long companyId) {
+
+        MDC.put("companyId", String.valueOf(companyId));
         Company company = companyRepository.findById(companyId)
                 .orElseThrow(() -> new RuntimeException(
                         "Company not found with id: " + companyId));
